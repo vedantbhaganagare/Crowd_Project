@@ -31,12 +31,22 @@ String peopleCountStr = "-";
 String landAvailableStr = "-";
 bool deviceOnline = false;
 
+int alertLevel = 0;
+int zoneAlert = 0;
+int suspiciousFlag = 0;
+int predictedPeople = 0;
+
+unsigned long alertStartTime = 0;
+bool alertActive = false;
+bool lastAlertState = false;
+const unsigned long ALERT_DURATION = 5000; // 5 seconds
+
 unsigned long lastCloudFetch = 0;
 unsigned long lastSuccessfulUpdate = 0;
 
 // ================= UI =================
 int currentPage = 0;
-const int totalPages = 4;
+const int totalPages = 7;
 int lastButtonState = LOW;
 
 String scrollText = "SVPCET Crowd Monitor | Cloud Mode ";
@@ -143,6 +153,11 @@ void fetchCloudData() {
 
       int people = doc["field1"] | 0;
       float land = doc["field2"] | 0.0;
+      
+      alertLevel = doc["field3"] | 0;
+      zoneAlert = doc["field4"] | 0;
+      suspiciousFlag = doc["field5"] | 0;
+      predictedPeople = doc["field6"] | 0;
 
       peopleCountStr = String(people);
       landAvailableStr = String(land, 1);
@@ -202,6 +217,47 @@ void updateOLED() {
         display.println("System Mode");
         display.setCursor(5, 30);
         display.println("Cloud Active");
+        display.setCursor(5, 45);
+        display.println("AI Active");
+        break;
+
+      case 4:
+        display.setCursor(5, 5);
+        display.println("Zone Status");
+        display.setCursor(5, 30);
+        display.setTextSize(2);
+        if (zoneAlert == 1) {
+          display.setTextColor(SSD1306_BLACK, SSD1306_WHITE); // Highlight text
+          display.println("ZONE ALERT");
+          display.setTextColor(SSD1306_WHITE, SSD1306_BLACK); // Reset formatting
+        } else {
+          display.println("SAFE");
+        }
+        display.setTextSize(1);
+        break;
+
+      case 5:
+        display.setCursor(5, 5);
+        display.println("Suspicious Activity");
+        display.setCursor(5, 30);
+        if (suspiciousFlag == 1) {
+          display.setTextColor(SSD1306_BLACK, SSD1306_WHITE); // Warn
+          display.println("Suspicious Detected");
+          display.setTextColor(SSD1306_WHITE, SSD1306_BLACK);
+        } else {
+          display.println("Normal");
+        }
+        break;
+
+      case 6:
+        display.setCursor(5, 5);
+        display.println("Prediction");
+        display.setCursor(5, 20);
+        display.println("Next 5 min:");
+        display.setCursor(5, 35);
+        display.setTextSize(2);
+        display.println(predictedPeople);
+        display.setTextSize(1);
         break;
     }
   }
@@ -242,17 +298,25 @@ void updateAlert() {
   if (!deviceOnline) {
     digitalWrite(alert_LED, LOW);
     digitalWrite(buzzer, LOW);
+    alertActive = false;
+    lastAlertState = false;
     return;
   }
 
-  int people = peopleCountStr.toInt();
-  float land = landAvailableStr.toFloat();
+  bool newAlert = (zoneAlert == 1 || alertLevel >= 2);
 
-  if (land < 50 || people > 5) {
+  if (newAlert && !lastAlertState) {
+    alertActive = true;
+    alertStartTime = millis();
     digitalWrite(alert_LED, HIGH);
     digitalWrite(buzzer, HIGH);
-  } else {
+  }
+
+  if (alertActive && (millis() - alertStartTime >= ALERT_DURATION)) {
     digitalWrite(alert_LED, LOW);
     digitalWrite(buzzer, LOW);
+    alertActive = false;
   }
+
+  lastAlertState = newAlert;
 }
