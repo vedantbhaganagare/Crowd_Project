@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useCallback } from "react";
 import {
   LineChart,
   Line,
@@ -6,8 +6,7 @@ import {
   YAxis,
   CartesianGrid,
   Tooltip,
-  ResponsiveContainer,
-  Legend
+  ResponsiveContainer
 } from "recharts";
 
 export default function App() {
@@ -23,18 +22,30 @@ export default function App() {
   const occupancy = Math.min(100, Math.max(0, Math.round((people / MAX) * 100)));
   const statusText = occupancy >= 95 ? "CRITICAL" : occupancy >= 90 ? "WARNING" : occupancy > 80 ? "HIGH" : occupancy > 45 ? "MODERATE" : "SAFE";
 
-  const statusColor = (occ) => occ >= 95 ? "#ff4f4f" : occ >= 90 ? "#f59e0b" : occ > 80 ? "#f97316" : occ > 45 ? "#22c55e" : "#10b981";
   const clampP = (n) => Math.min(MAX, Math.max(0, n));
   const [operationMode, setOperationMode] = useState("Safe Mode");
   const [feedHover, setFeedHover] = useState(false);
   const [flowHover, setFlowHover] = useState(false);
+
+  // ---------- NEW TEST FEATURES - from Python test scripts ----------
+  const [landAvailability, setLandAvailability] = useState(100);
+  const [trackingStatus, setTrackingStatus] = useState("AWAITING TARGET");
+  const [targetLocked, setTargetLocked] = useState(false);
+  const [predictedPeople, setPredictedPeople] = useState(0);
+  const [trend, setTrend] = useState("Stable");
+  const [clusterFlag, setClusterFlag] = useState(0);
+  const [motionFlag, setMotionFlag] = useState(0);
+  const [suspiciousFlag, setSuspiciousFlag] = useState(false);
+  const [prevHistoryPeople, setPrevHistoryPeople] = useState(people);
+
+  const PREDICT_AFTER = 300;
 
   const TS_CHANNEL = "3320572";
   const TS_READ_KEY = "GVJ80AY5DZUYI6J3";
   const TS_WRITE_KEY = "J61HN6RR8G894U0M";
   const TS_FETCH_URL = `https://api.thingspeak.com/channels/${TS_CHANNEL}/feeds.json?api_key=${TS_READ_KEY}&results=20`;
 
-  const fetchThingSpeak = async () => {
+  const fetchThingSpeak = useCallback(async () => {
     try {
       setTsStatus("Fetching from ThingSpeak...");
       const res = await fetch(TS_FETCH_URL);
@@ -68,7 +79,7 @@ export default function App() {
       setTsStatus(`TS fetch failed: ${err.message}`);
       setTsLive(false);
     }
-  };
+  }, [TS_FETCH_URL, MAX]);
 
   const pushThingSpeak = async (count) => {
     try {
@@ -82,14 +93,6 @@ export default function App() {
     } catch (err) {
       setTsStatus(`TS write failed: ${err.message}`);
     }
-  };
-
-  const adjustPeople = (delta) => {
-    setPeople((prev) => {
-      const next = clampP(prev + delta);
-      setHistory((prevH) => [...prevH.slice(-19), { time:new Date().toLocaleTimeString(), people: next, occupancy: Math.round((next / MAX) * 100) }]);
-      return next;
-    });
   };
 
   const applyMode = (mode) => {
@@ -121,7 +124,7 @@ export default function App() {
     fetchThingSpeak();
     const id = setInterval(fetchThingSpeak, 15000);
     return () => clearInterval(id);
-  }, []);
+  }, [fetchThingSpeak]);
 
   useEffect(() => {
     const id = setInterval(() => {
@@ -136,6 +139,61 @@ export default function App() {
     }, 3500);
     return () => clearInterval(id);
   }, [tsLive]);
+
+  // Normal mode logic (land availability and basic threshold alert)
+  useEffect(() => {
+    const occupiedPercent = occupancy;
+    const availability = Math.max(0, 100 - occupiedPercent);
+    setLandAvailability(availability);
+    if (availability < 50 || people > 5) {
+      setAlerts((prev) => {
+        const existing = prev.some((a) => a.msg.includes('CROWDED'));
+        if (existing) return prev;
+        return [...prev, { msg: 'ALERT: CROWDED', sev: 'WARNING', location: 'Current Feed', time: new Date().toLocaleTimeString() }];
+      });
+    }
+  }, [people, occupancy]);
+
+  // Person tracking (lock / lost status)
+  useEffect(() => {
+    if (!targetLocked && people > 0) {
+      setTargetLocked(true);
+      setTrackingStatus('STATUS: TRACKING TARGET');
+    } else if (targetLocked && people === 0) {
+      setTargetLocked(false);
+      setTrackingStatus('STATUS: TARGET LOST');
+    } else if (!targetLocked && people === 0) {
+      setTrackingStatus('STATUS: AWAITING TARGET');
+    }
+  }, [people, targetLocked]);
+
+  // Prediction logic (linear gradient history-based)
+  useEffect(() => {
+    if (history.length > 1) {
+      const first = history[0];
+      const last = history[history.length - 1];
+      const timeDiff = Math.max(5, history.length * 3.5);
+      const rate = (last.people - first.people) / timeDiff;
+      const rawPrediction = Math.round(last.people + rate * PREDICT_AFTER);
+      const clampedPrediction = Math.min(last.people + 50, Math.max(last.people - 50, rawPrediction));
+      const prediction = Math.max(0, clampedPrediction);
+      setPredictedPeople(prediction);
+      setTrend(prediction > people + 2 ? 'Increasing' : prediction < people ? 'Decreasing' : 'Stable');
+    } else {
+      setPredictedPeople(people);
+      setTrend('Stable');
+    }
+  }, [history, people]);
+
+  // Suspicious cluster + motion detection
+  useEffect(() => {
+    const motion = Math.abs(people - prevHistoryPeople) > 1;
+    const cluster = people > 6;
+    setClusterFlag(cluster ? 1 : 0);
+    setMotionFlag(motion ? 1 : 0);
+    setSuspiciousFlag(cluster && motion);
+    setPrevHistoryPeople(people);
+  }, [people, prevHistoryPeople]);
 
   const sidebarItems = [
     { key: 'Dashboard', icon: '🏙', label: 'Dashboard' },
@@ -373,11 +431,30 @@ export default function App() {
       return (
         <div style={{ ...glassCard, padding: 18 }}>
           <h3 style={{ margin: 0 }}>Live Monitoring</h3>
-          <p style={{ color: '#94a3b8' }}>Real-time stream and snapshot metrics.</p>
+          <p style={{ color: '#94a3b8' }}>Real-time stream and snapshot metrics with test-mode analytics.</p>
           <div style={{ display: 'flex', gap: 10, marginTop: 10 }}>
             <div style={{ flex: 1, ...glassCard, padding: 12 }}><strong>{people}</strong> people</div>
             <div style={{ flex: 1, ...glassCard, padding: 12 }}><strong>{occupancy}%</strong> occupancy</div>
             <div style={{ flex: 1, ...glassCard, padding: 12 }}><strong>{statusText}</strong> status</div>
+          </div>
+
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: 10, marginTop: 14 }}>
+            <div style={{ ...glassCard, padding: 12 }}>
+              <strong>Normal Mode</strong><br />Land Available: <strong>{landAvailability.toFixed(1)}%</strong><br />Crowded: {landAvailability < 50 || people > 5 ? 'YES' : 'NO'}
+            </div>
+            <div style={{ ...glassCard, padding: 12 }}>
+              <strong>Person Tracking</strong><br />{trackingStatus}<br />Target: {targetLocked ? 'Locked' : 'Not locked'}
+            </div>
+            <div style={{ ...glassCard, padding: 12 }}>
+              <strong>Prediction</strong><br />Predicted (5m): <strong>{predictedPeople}</strong><br />Trend: <strong>{trend}</strong>
+            </div>
+            <div style={{ ...glassCard, padding: 12 }}>
+              <strong>Suspicious Analysis</strong><br />Cluster: {clusterFlag} · Motion: {motionFlag}<br />Suspicious: <strong>{suspiciousFlag ? 'YES' : 'NO'}</strong>
+            </div>
+          </div>
+
+          <div style={{ marginTop: 12, fontSize: 11, color: '#9ca3af' }}>
+            (Simulated feature set derived from normal_mode_test, person_tracking_test, prediction_test, suspicious_test)
           </div>
         </div>
       );
