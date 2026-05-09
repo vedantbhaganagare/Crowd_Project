@@ -10,8 +10,8 @@ const char* ssid = "e-Yantra";
 const char* password = "eYL@2016";
 
 // ================= THINGSPEAK =================
-const String CHANNEL_ID = "3274416";
-const String READ_API_KEY = "3GS8Y3U5RWSWXE5U";
+const String CHANNEL_ID = "3320572";
+const String READ_API_KEY = "GVJ80AY5DZUYI6J3";
 
 // ================= HARDWARE =================
 #define power_LED 14

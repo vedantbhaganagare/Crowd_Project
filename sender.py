@@ -4,9 +4,10 @@ import threading
 import queue
 import requests
 from ultralytics import YOLO
+from camera.camera_stream import CameraStream
 
 # ================= THINGSPEAK CONFIG =================
-WRITE_API_KEY = "30KU7TJ41IYEQOK2"
+WRITE_API_KEY = "J61HN6RR8G894U0M"
 THINGSPEAK_URL = "https://api.thingspeak.com/update"
 
 # ThingSpeak free version → minimum 15 sec
@@ -23,14 +24,9 @@ model = YOLO("yolov8n.pt")
 print("Model Loaded")
 
 # ================= CAMERA INIT =================
-cap = cv2.VideoCapture(RTSP_URL, cv2.CAP_FFMPEG)
-cap.set(cv2.CAP_PROP_BUFFERSIZE, 2)
+camera = CameraStream(RTSP_URL)
 
-if not cap.isOpened():
-    print("❌ Camera not found")
-    exit()
-
-print("✅ Camera connected. Starting detection...")
+print("✅ Camera connection initiated. Starting detection...")
 
 # ================= GLOBAL VARIABLES =================
 people_count = 0
@@ -124,10 +120,10 @@ t_det.start()
 # ================= DISPLAY LOOP =================
 while True:
 
-    ret, frame = cap.read()
-    if not ret:
-        print("Frame not received")
-        break
+    frame = camera.get_frame()
+    if frame is None:
+        time.sleep(0.01)
+        continue
 
     # Keep only latest frame
     if not frame_queue.empty():
@@ -173,6 +169,6 @@ while True:
         break
 
 
-cap.release()
+camera.release()
 cv2.destroyAllWindows()
 print("System stopped.")
